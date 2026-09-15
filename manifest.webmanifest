@@ -1,0 +1,8 @@
+{
+  "name": "Hardman Family Center",
+  "short_name": "Family Center",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#79B5D9",
+  "theme_color": "#79B5D9"
+}
