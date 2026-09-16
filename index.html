@@ -1442,50 +1442,161 @@
   }
 
   function showApiSetup(message) {
-    let box = document.getElementById("pwaApiSetup");
-    if (!box) {
-      box = document.createElement("div");
-      box.id = "pwaApiSetup";
-      box.style.cssText =
-        "position:fixed;left:12px;right:12px;top:12px;z-index:99999;" +
-        "max-width:760px;margin:auto;background:#fff;border:2px solid #1a73e8;" +
-        "border-radius:12px;padding:12px;box-shadow:0 5px 20px rgba(0,0,0,.25);" +
-        "font-family:Arial,sans-serif";
-      box.innerHTML =
-        '<div style="font-weight:700;margin-bottom:6px">Family Center API setup</div>' +
-        '<div id="pwaApiSetupMessage" style="font-size:13px;margin-bottom:8px"></div>' +
-        '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-        '<input id="pwaApiUrlInput" style="flex:1 1 420px;padding:10px" ' +
-        'placeholder="Paste Apps Script /exec URL">' +
-        '<button id="pwaApiSaveButton" style="padding:10px 14px">Save</button></div>';
-      document.addEventListener("DOMContentLoaded", function () {
-        if (!document.body.contains(box)) document.body.appendChild(box);
-      });
-      if (document.body) document.body.appendChild(box);
+    function mountAndWire() {
+      let box = document.getElementById("pwaApiSetup");
 
-      setTimeout(function () {
-        const input = document.getElementById("pwaApiUrlInput");
-        const save = document.getElementById("pwaApiSaveButton");
-        if (input) input.value = getApiUrl();
-        if (save) {
-          save.onclick = function () {
-            const value = String(input.value || "").trim();
-            if (!/\/exec(?:\?|$)/.test(value)) {
-              document.getElementById("pwaApiSetupMessage").textContent =
-                "Use the deployed Apps Script URL ending in /exec.";
-              return;
+      if (!box) {
+        box = document.createElement("div");
+        box.id = "pwaApiSetup";
+        box.style.cssText =
+          "position:fixed;left:12px;right:12px;top:12px;z-index:99999;" +
+          "max-width:760px;margin:auto;background:#fff;border:2px solid #1a73e8;" +
+          "border-radius:12px;padding:12px;box-shadow:0 5px 20px rgba(0,0,0,.25);" +
+          "font-family:Arial,sans-serif";
+
+        box.innerHTML =
+          '<div style="font-weight:700;margin-bottom:6px">Family Center API setup</div>' +
+          '<div id="pwaApiSetupMessage" style="font-size:13px;margin-bottom:8px"></div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          '<input id="pwaApiUrlInput" style="flex:1 1 420px;padding:10px" ' +
+          'placeholder="Paste Apps Script /exec URL">' +
+          '<button id="pwaApiSaveButton" type="button" style="padding:10px 14px">Save & Test</button></div>';
+
+        document.body.appendChild(box);
+      }
+
+      const msg =
+        document.getElementById("pwaApiSetupMessage");
+
+      const input =
+        document.getElementById("pwaApiUrlInput");
+
+      const save =
+        document.getElementById("pwaApiSaveButton");
+
+      if (msg) {
+        msg.textContent =
+          message ||
+          "Paste the Apps Script Web App URL ending in /exec.";
+      }
+
+      if (input && !input.value) {
+        input.value = getApiUrl();
+      }
+
+      if (save) {
+        save.onclick = async function () {
+          const value =
+            String(
+              input && input.value
+                ? input.value
+                : ""
+            ).trim();
+
+          if (!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec(?:[?#].*)?$/i.test(value)) {
+            if (msg) {
+              msg.textContent =
+                "Invalid URL. Paste the Apps Script Web App deployment URL ending in /exec.";
             }
-            localStorage.setItem("familyCenterApiUrl", value.split("?")[0]);
+            return;
+          }
+
+          const cleanUrl =
+            value.split("?")[0].split("#")[0];
+
+          save.disabled = true;
+          save.textContent = "Testing…";
+
+          if (msg) {
+            msg.textContent =
+              "Testing connection to Family Center…";
+          }
+
+          try {
+            const pingUrl =
+              new URL(cleanUrl);
+
+            pingUrl.searchParams.set(
+              "api",
+              "ping"
+            );
+
+            const response =
+              await fetch(
+                pingUrl.toString(),
+                {
+                  method: "GET",
+                  cache: "no-store",
+                  redirect: "follow"
+                }
+              );
+
+            if (!response.ok) {
+              throw new Error(
+                "HTTP " + response.status
+              );
+            }
+
+            const data =
+              await response.json();
+
+            if (
+              !data ||
+              data.success !== true
+            ) {
+              throw new Error(
+                data && data.error
+                  ? data.error
+                  : "Ping did not return success."
+              );
+            }
+
+            localStorage.setItem(
+              "familyCenterApiUrl",
+              cleanUrl
+            );
+
+            if (msg) {
+              msg.textContent =
+                "Connected. Loading Family Center…";
+            }
+
             box.remove();
             location.reload();
-          };
-        }
-      }, 0);
+
+          } catch (error) {
+            save.disabled = false;
+            save.textContent = "Save & Test";
+
+            if (msg) {
+              msg.textContent =
+                "Connection failed: " +
+                (
+                  error && error.message
+                    ? error.message
+                    : error
+                );
+            }
+          }
+        };
+      }
     }
-    setTimeout(function () {
-      const msg = document.getElementById("pwaApiSetupMessage");
-      if (msg) msg.textContent = message || "Apps Script URL is required.";
-    }, 0);
+
+    /*
+     * The compatibility bridge is loaded in <head>. On a new browser,
+     * document.body does not exist yet. Phase 2.1 created the dialog
+     * before DOMContentLoaded and attempted to wire the Save button too
+     * early, leaving a visible but inert button.
+     */
+    if (document.readyState === "loading") {
+      document.addEventListener(
+        "DOMContentLoaded",
+        mountAndWire,
+        { once: true }
+      );
+    } else {
+      mountAndWire();
+    }
   }
 
   async function rpcCall(method, args) {
@@ -9192,6 +9303,200 @@ function addWeeklyMeal(
     }
 
 
+    /*
+     * A newly-added grocery is rendered immediately with a browser-only
+     * temp Entry_ID.  The Apps Script write can still be finishing when
+     * the trash button is tapped.  Never send a temp ID to webDeleteItem.
+     *
+     * Instead, reload the authoritative list, locate the matching Sheets
+     * row, and then delete using its permanent Entry_ID.
+     */
+    if (
+      String(entryId || '')
+        .startsWith('temp-')
+    ) {
+
+      const tempItem =
+        (currentListData.items || [])
+          .find(
+            item =>
+              String(item.entryId || '') ===
+              String(entryId || '')
+          );
+
+      if (!tempItem) {
+        loadList();
+        return;
+      }
+
+      const wantedItemId =
+        String(
+          tempItem.itemId || ''
+        ).trim();
+
+      const wantedName =
+        String(
+          tempItem.item || ''
+        )
+          .trim()
+          .toLowerCase();
+
+      const wantedUnit =
+        String(
+          tempItem.unit || ''
+        )
+          .trim()
+          .toLowerCase();
+
+      const wantedVariantId =
+        String(
+          tempItem.variantId || ''
+        ).trim();
+
+
+      google.script.run
+
+        .withSuccessHandler(
+          data => {
+
+            currentListData = data;
+
+            const serverItems =
+              data &&
+              Array.isArray(data.items)
+                ? data.items
+                : [];
+
+
+            const realItem =
+              serverItems.find(
+                candidate =>
+                  String(candidate.itemId || '').trim() ===
+                    wantedItemId &&
+
+                  String(candidate.variantId || '').trim() ===
+                    wantedVariantId &&
+
+                  String(candidate.unit || '')
+                    .trim()
+                    .toLowerCase() ===
+                    wantedUnit &&
+
+                  !candidate.purchased
+              ) ||
+
+              serverItems.find(
+                candidate =>
+                  String(candidate.itemId || '').trim() ===
+                    wantedItemId &&
+
+                  String(candidate.variantId || '').trim() ===
+                    wantedVariantId &&
+
+                  !candidate.purchased
+              ) ||
+
+              serverItems.find(
+                candidate =>
+                  String(candidate.item || '')
+                    .trim()
+                    .toLowerCase() ===
+                    wantedName &&
+
+                  String(candidate.variantId || '').trim() ===
+                    wantedVariantId &&
+
+                  !candidate.purchased
+              );
+
+
+            if (!realItem) {
+
+              renderList(
+                currentListData,
+                false
+              );
+
+              showError(
+                new Error(
+                  'This item is still being added. Please try Delete again in a moment.'
+                )
+              );
+
+              return;
+            }
+
+
+            /*
+             * Use the permanent Sheets Entry_ID.
+             * Calling deleteItem again would ask for confirmation twice,
+             * so perform the normal optimistic delete directly here.
+             */
+            const realEntryId =
+              realItem.entryId;
+
+            const oldItems =
+              [
+                ...currentListData.items
+              ];
+
+            currentListData.items =
+              currentListData.items
+                .filter(
+                  item =>
+                    String(item.entryId) !==
+                    String(realEntryId)
+                );
+
+            renderList(
+              currentListData,
+              false
+            );
+
+
+            google.script.run
+
+              .withSuccessHandler(
+                () => {
+                  /* Deleted successfully. */
+                }
+              )
+
+              .withFailureHandler(
+                error => {
+
+                  currentListData.items =
+                    oldItems;
+
+                  renderList(
+                    currentListData,
+                    false
+                  );
+
+                  showError(
+                    error
+                  );
+                }
+              )
+
+              .webDeleteItem(
+                realEntryId
+              );
+          }
+        )
+
+        .withFailureHandler(
+          showError
+        )
+
+        .webGetListWithVariants(
+          selectedList
+        );
+
+      return;
+    }
+
+
     const oldItems =
       [
         ...currentListData.items
@@ -9199,8 +9504,8 @@ function addWeeklyMeal(
 
 
     /*
-    * Remove locally first.
-    */
+     * Remove locally first.
+     */
     currentListData.items =
       currentListData.items
         .filter(
@@ -9224,10 +9529,7 @@ function addWeeklyMeal(
 
       .withSuccessHandler(
         () => {
-
-          /*
-          * Nothing else required.
-          */
+          /* Nothing else required. */
         }
       )
 
@@ -9235,11 +9537,10 @@ function addWeeklyMeal(
         error => {
 
           /*
-          * Restore list.
-          */
+           * Restore list.
+           */
           currentListData.items =
             oldItems;
-
 
           renderList(
             currentListData,
@@ -9257,7 +9558,6 @@ function addWeeklyMeal(
         entryId
       );
   }
-
 
   function renderList(
     data,
