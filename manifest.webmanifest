@@ -2,7 +2,20 @@
   "name": "Hardman Family Center",
   "short_name": "Family Center",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#79B5D9",
-  "theme_color": "#79B5D9"
+  "background_color": "#79b5d9",
+  "theme_color": "#79b5d9",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/jshard77/family-center-assets/main/family-center-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://raw.githubusercontent.com/jshard77/family-center-assets/main/family-center-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
 }
