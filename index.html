@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Family Center v5.3: variants + Kroger + history + projected totals + UPC shopping mode -->
+<!-- Family Center v5.4: Shopping Mode UPC normalization + scan-to-add -->
 <html>
 
 <head>
@@ -1353,6 +1353,45 @@
       color: #a50e0e;
     }
 
+
+    .shopping-add-card {
+      display: none;
+      border: 1px solid #d9dde3;
+      border-radius: 12px;
+      padding: 12px;
+      margin-top: 10px;
+      background: #fff;
+    }
+
+    .shopping-add-card.open {
+      display: block;
+    }
+
+    .shopping-add-title {
+      font-size: 19px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .shopping-add-grid {
+      display: grid;
+      grid-template-columns: 1fr 110px 140px;
+      gap: 8px;
+    }
+
+    .shopping-add-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    @media (max-width: 650px) {
+      .shopping-add-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .shopping-match-card {
       display: none;
       border: 1px solid #d9dde3;
@@ -2330,6 +2369,64 @@
       </div>
     </div>
 
+    <div id="shoppingAddCard" class="shopping-add-card">
+      <div class="shopping-add-title">Add scanned item</div>
+      <div id="shoppingAddLookupStatus" class="shopping-match-detail"></div>
+
+      <div class="field">
+        <label for="shoppingAddProduct">Kroger product</label>
+        <select id="shoppingAddProduct" onchange="shoppingAddProductChanged()">
+          <option value="">Looking up barcode…</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="shoppingAddName">Family Center item name</label>
+        <input id="shoppingAddName" type="text" autocomplete="off"
+               placeholder="Enter item name">
+      </div>
+
+      <div class="shopping-add-grid">
+        <div class="field">
+          <label for="shoppingAddCategory">Category</label>
+          <select id="shoppingAddCategory"></select>
+        </div>
+
+        <div class="field">
+          <label for="shoppingAddCount">Quantity</label>
+          <input id="shoppingAddCount" type="number" min="1" step="1"
+                 inputmode="numeric" value="1">
+        </div>
+
+        <div class="field">
+          <label for="shoppingAddUnit">Unit</label>
+          <input id="shoppingAddUnit" type="text" placeholder="each">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="shoppingAddPrice">Unit price <span style="font-weight:normal;color:#666;">(optional)</span></label>
+        <input id="shoppingAddPrice" type="number" min="0.01" step="0.01"
+               inputmode="decimal" placeholder="0.00">
+      </div>
+
+      <div class="field">
+        <label for="shoppingAddNotes">Notes <span style="font-weight:normal;color:#666;">(optional)</span></label>
+        <input id="shoppingAddNotes" type="text" placeholder="Optional">
+      </div>
+
+      <div class="shopping-add-actions">
+        <button id="shoppingAddButton" class="button primary" type="button"
+                onclick="confirmAddScannedShoppingItem()">
+          Add to Cart
+        </button>
+        <button class="button secondary" type="button"
+                onclick="cancelAddScannedShoppingItem()">
+          Cancel
+        </button>
+      </div>
+    </div>
+
     <div class="modal-buttons">
       <button
         class="button secondary"
@@ -2771,6 +2868,9 @@
   let shoppingLastUpc = '';
   let shoppingLastScanTime = 0;
   let shoppingMatchedItem = null;
+  let shoppingPendingUpc = '';
+  let shoppingPendingProducts = [];
+  let shoppingPendingCategories = [];
 
 
 
@@ -10965,36 +11065,62 @@ function addWeeklyMeal(
   }
 
 
-  function normalizeShoppingUpc(
-    value
-  ) {
-    const digits =
-      String(
-        value || ''
-      )
-        .replace(
-          /\D/g,
-          ''
-        );
+  function shoppingUpcCandidates(value) {
+    const digits = String(value || '').replace(/\D/g, '');
 
     if (!digits) {
-      return '';
+      return [];
     }
 
+    const set = new Set();
+
+    function add(v) {
+      const clean = String(v || '').replace(/\D/g, '');
+      if (!clean) return;
+      set.add(clean);
+      set.add(clean.replace(/^0+/, '') || '0');
+    }
+
+    add(digits);
+
     /*
-     * EAN-13 often represents a 12-digit UPC-A
-     * with one leading zero. Removing leading zeros
-     * makes those representations compare safely.
+     * Kroger sometimes stores the 10-digit UPC company/item core,
+     * while the package carries a 12-digit UPC-A:
+     *   package 048564067008
+     *   Kroger  4856406700
+     *
+     * For UPC-A, remove the leading number-system digit and trailing
+     * check digit. EAN-13 with a leading zero is reduced to UPC-A first.
      */
-    return (
-      digits.replace(
-        /^0+/,
-        ''
-      ) ||
-      '0'
-    );
+    let upca = digits;
+
+    if (upca.length === 13 && upca.charAt(0) === '0') {
+      upca = upca.slice(1);
+      add(upca);
+    }
+
+    if (upca.length === 12) {
+      add(upca.slice(1, 11));
+    }
+
+    if (digits.length === 11 && digits.charAt(0) === '0') {
+      add(digits.slice(1));
+    }
+
+    return Array.from(set);
   }
 
+
+  function normalizeShoppingUpc(value) {
+    const candidates = shoppingUpcCandidates(value);
+    return candidates.length ? candidates[0] : '';
+  }
+
+
+  function shoppingUpcsMatch(a, b) {
+    const aSet = new Set(shoppingUpcCandidates(a));
+    return shoppingUpcCandidates(b).some(value => aSet.has(value));
+  }
 
   function getItemKrogerUpc(
     item
@@ -11041,12 +11167,12 @@ function addWeeklyMeal(
     const matches =
       currentListData.items.filter(
         item =>
-          normalizeShoppingUpc(
+          shoppingUpcsMatch(
             getItemKrogerUpc(
               item
-            )
-          ) ===
-          wanted
+            ),
+            upc
+          )
       );
 
     if (!matches.length) {
@@ -11205,6 +11331,18 @@ function addWeeklyMeal(
 
     shoppingMatchedItem =
       null;
+
+    shoppingPendingUpc = '';
+    shoppingPendingProducts = [];
+
+    const addCard =
+      document.getElementById(
+        'shoppingAddCard'
+      );
+
+    if (addCard) {
+      addCard.classList.remove('open');
+    }
 
     setShoppingStatus(
       'Ready to scan.'
@@ -11512,8 +11650,7 @@ function addWeeklyMeal(
       );
 
     if (!item) {
-      shoppingMatchedItem =
-        null;
+      shoppingMatchedItem = null;
 
       document
         .getElementById(
@@ -11523,13 +11660,8 @@ function addWeeklyMeal(
           'open'
         );
 
-      setShoppingStatus(
-        'UPC ' +
-        upc +
-        ' is not matched to an item on the current ' +
-        selectedList +
-        ' list.',
-        'error'
+      beginAddScannedShoppingItem(
+        upc
       );
 
       return;
@@ -11653,6 +11785,742 @@ function addWeeklyMeal(
         priceToSave === null
           ? 'scan'
           : 'scan_estimate'
+      );
+  }
+
+
+  function cancelAddScannedShoppingItem() {
+    const card = document.getElementById('shoppingAddCard');
+
+    if (card) {
+      card.classList.remove('open');
+    }
+
+    shoppingPendingUpc = '';
+    shoppingPendingProducts = [];
+
+    setShoppingStatus(
+      'Ready to scan.'
+    );
+  }
+
+
+  function shoppingProductBestPrice(product) {
+    if (!product) {
+      return null;
+    }
+
+    const promo = Number(product.promoPrice);
+
+    if (Number.isFinite(promo) && promo > 0) {
+      return promo;
+    }
+
+    const regular = Number(product.regularPrice);
+
+    if (Number.isFinite(regular) && regular > 0) {
+      return regular;
+    }
+
+    return null;
+  }
+
+
+  function shoppingAddProductChanged() {
+    const select =
+      document.getElementById(
+        'shoppingAddProduct'
+      );
+
+    if (!select) {
+      return;
+    }
+
+    const index =
+      Number(select.value);
+
+    if (
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= shoppingPendingProducts.length
+    ) {
+      return;
+    }
+
+    const product =
+      shoppingPendingProducts[index];
+
+    const name =
+      document.getElementById(
+        'shoppingAddName'
+      );
+
+    const price =
+      document.getElementById(
+        'shoppingAddPrice'
+      );
+
+    if (
+      name &&
+      !String(name.value || '').trim()
+    ) {
+      name.value =
+        product.description ||
+        product.brand ||
+        '';
+    }
+
+    const best =
+      shoppingProductBestPrice(
+        product
+      );
+
+    if (
+      price &&
+      best !== null
+    ) {
+      price.value =
+        best.toFixed(2);
+    }
+  }
+
+
+  function populateShoppingAddProducts(products) {
+    const select =
+      document.getElementById(
+        'shoppingAddProduct'
+      );
+
+    if (!select) {
+      return;
+    }
+
+    shoppingPendingProducts =
+      Array.isArray(products)
+        ? products
+        : [];
+
+    select.innerHTML = '';
+
+    if (!shoppingPendingProducts.length) {
+      const option =
+        document.createElement(
+          'option'
+        );
+
+      option.value = '-1';
+      option.textContent =
+        'UPC not found at Kroger — add manually';
+
+      select.appendChild(
+        option
+      );
+
+      return;
+    }
+
+    shoppingPendingProducts.forEach(
+      (product, index) => {
+        const option =
+          document.createElement(
+            'option'
+          );
+
+        option.value =
+          String(index);
+
+        const parts = [
+          product.description ||
+          product.brand ||
+          product.productId
+        ];
+
+        if (product.size) {
+          parts.push(
+            product.size
+          );
+        }
+
+        const best =
+          shoppingProductBestPrice(
+            product
+          );
+
+        if (best !== null) {
+          parts.push(
+            '$' +
+            best.toFixed(2)
+          );
+        }
+
+        option.textContent =
+          parts.join(
+            ' • '
+          );
+
+        select.appendChild(
+          option
+        );
+      }
+    );
+
+    select.value = '0';
+
+    shoppingAddProductChanged();
+  }
+
+
+  function populateShoppingAddCategories() {
+    google.script.run
+      .withSuccessHandler(
+        categories => {
+          shoppingPendingCategories =
+            Array.isArray(categories)
+              ? categories
+              : [];
+
+          const select =
+            document.getElementById(
+              'shoppingAddCategory'
+            );
+
+          if (!select) {
+            return;
+          }
+
+          select.innerHTML = '';
+
+          shoppingPendingCategories.forEach(
+            category => {
+              const option =
+                document.createElement(
+                  'option'
+                );
+
+              option.value =
+                String(
+                  category.categoryId ||
+                  category.id ||
+                  ''
+                );
+
+              option.textContent =
+                category.category ||
+                category.name ||
+                'Other';
+
+              select.appendChild(
+                option
+              );
+            }
+          );
+        }
+      )
+      .withFailureHandler(
+        error => {
+          console.warn(
+            'Shopping categories:',
+            error
+          );
+        }
+      )
+      .webGetCategories();
+  }
+
+
+  function beginAddScannedShoppingItem(upc) {
+    shoppingPendingUpc =
+      String(upc || '').trim();
+
+    shoppingPendingProducts = [];
+
+    const card =
+      document.getElementById(
+        'shoppingAddCard'
+      );
+
+    const status =
+      document.getElementById(
+        'shoppingAddLookupStatus'
+      );
+
+    const productSelect =
+      document.getElementById(
+        'shoppingAddProduct'
+      );
+
+    const name =
+      document.getElementById(
+        'shoppingAddName'
+      );
+
+    const count =
+      document.getElementById(
+        'shoppingAddCount'
+      );
+
+    const unit =
+      document.getElementById(
+        'shoppingAddUnit'
+      );
+
+    const price =
+      document.getElementById(
+        'shoppingAddPrice'
+      );
+
+    const notes =
+      document.getElementById(
+        'shoppingAddNotes'
+      );
+
+    if (card) {
+      card.classList.add('open');
+    }
+
+    if (status) {
+      status.textContent =
+        'UPC ' +
+        shoppingPendingUpc +
+        ' is not on this week’s list. Looking it up…';
+    }
+
+    if (productSelect) {
+      productSelect.innerHTML =
+        '<option value="">Looking up barcode…</option>';
+    }
+
+    if (name) name.value = '';
+    if (count) count.value = '1';
+    if (unit) unit.value = 'each';
+    if (price) price.value = '';
+    if (notes) notes.value = '';
+
+    populateShoppingAddCategories();
+
+    setShoppingStatus(
+      'New item scanned — looking up UPC ' +
+      shoppingPendingUpc +
+      '…'
+    );
+
+    const candidates =
+      shoppingUpcCandidates(
+        shoppingPendingUpc
+      );
+
+    const terms = [];
+
+    [
+      shoppingPendingUpc,
+      ...candidates
+    ].forEach(
+      term => {
+        if (
+          term &&
+          !terms.includes(term)
+        ) {
+          terms.push(term);
+        }
+      }
+    );
+
+    function trySearch(index) {
+      if (index >= terms.length) {
+        populateShoppingAddProducts([]);
+
+        if (status) {
+          status.textContent =
+            'Kroger did not identify this UPC. Enter an item name and category to add it anyway.';
+        }
+
+        setShoppingStatus(
+          'UPC not found at Kroger. You can still add it manually.',
+          'error'
+        );
+
+        return;
+      }
+
+      google.script.run
+        .withSuccessHandler(
+          result => {
+            const products =
+              result &&
+              result.success &&
+              Array.isArray(
+                result.products
+              )
+                ? result.products
+                : [];
+
+            if (products.length) {
+              populateShoppingAddProducts(
+                products
+              );
+
+              if (status) {
+                status.textContent =
+                  'Kroger found ' +
+                  products.length +
+                  ' possible product' +
+                  (
+                    products.length === 1
+                      ? ''
+                      : 's'
+                  ) +
+                  '. Confirm the item below.';
+              }
+
+              setShoppingStatus(
+                'Product found. Confirm it and tap Add to Cart.',
+                'success'
+              );
+
+              return;
+            }
+
+            trySearch(
+              index + 1
+            );
+          }
+        )
+        .withFailureHandler(
+          () => {
+            trySearch(
+              index + 1
+            );
+          }
+        )
+        .webSearchKrogerProducts(
+          terms[index]
+        );
+    }
+
+    trySearch(0);
+  }
+
+
+  function confirmAddScannedShoppingItem() {
+    const upc =
+      String(
+        shoppingPendingUpc ||
+        ''
+      ).trim();
+
+    if (!upc) {
+      setShoppingStatus(
+        'Scan an item first.',
+        'error'
+      );
+      return;
+    }
+
+    const nameEl =
+      document.getElementById(
+        'shoppingAddName'
+      );
+
+    const categoryEl =
+      document.getElementById(
+        'shoppingAddCategory'
+      );
+
+    const countEl =
+      document.getElementById(
+        'shoppingAddCount'
+      );
+
+    const unitEl =
+      document.getElementById(
+        'shoppingAddUnit'
+      );
+
+    const priceEl =
+      document.getElementById(
+        'shoppingAddPrice'
+      );
+
+    const notesEl =
+      document.getElementById(
+        'shoppingAddNotes'
+      );
+
+    const productEl =
+      document.getElementById(
+        'shoppingAddProduct'
+      );
+
+    const itemName =
+      String(
+        nameEl &&
+        nameEl.value
+          ? nameEl.value
+          : ''
+      )
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const categoryId =
+      String(
+        categoryEl &&
+        categoryEl.value
+          ? categoryEl.value
+          : ''
+      ).trim();
+
+    const count =
+      Number(
+        countEl
+          ? countEl.value
+          : 1
+      );
+
+    const unit =
+      String(
+        unitEl &&
+        unitEl.value
+          ? unitEl.value
+          : ''
+      ).trim();
+
+    const notes =
+      String(
+        notesEl &&
+        notesEl.value
+          ? notesEl.value
+          : ''
+      ).trim();
+
+    const priceNumber =
+      Number(
+        priceEl
+          ? priceEl.value
+          : ''
+      );
+
+    const unitPrice =
+      Number.isFinite(
+        priceNumber
+      ) &&
+      priceNumber > 0
+        ? priceNumber
+        : null;
+
+    if (!itemName) {
+      setShoppingStatus(
+        'Enter a Family Center item name.',
+        'error'
+      );
+
+      if (nameEl) {
+        nameEl.focus();
+      }
+
+      return;
+    }
+
+    if (
+      !Number.isInteger(count) ||
+      count < 1
+    ) {
+      setShoppingStatus(
+        'Quantity must be a positive whole number.',
+        'error'
+      );
+      return;
+    }
+
+    const productIndex =
+      productEl
+        ? Number(
+            productEl.value
+          )
+        : -1;
+
+    const product =
+      Number.isInteger(
+        productIndex
+      ) &&
+      productIndex >= 0 &&
+      productIndex <
+        shoppingPendingProducts.length
+        ? shoppingPendingProducts[
+            productIndex
+          ]
+        : null;
+
+    const button =
+      document.getElementById(
+        'shoppingAddButton'
+      );
+
+    if (button) {
+      button.disabled = true;
+      button.textContent =
+        'Adding…';
+    }
+
+    setShoppingStatus(
+      'Adding ' +
+      itemName +
+      ' to the ' +
+      selectedList +
+      ' list…'
+    );
+
+    google.script.run
+      .withSuccessHandler(
+        created => {
+          if (
+            !created ||
+            !created.entryId
+          ) {
+            if (button) {
+              button.disabled = false;
+              button.textContent =
+                'Add to Cart';
+            }
+
+            setShoppingStatus(
+              'The item was created, but Family Center did not return the new list row.',
+              'error'
+            );
+
+            loadList(false);
+            return;
+          }
+
+          const finishPurchase =
+            () => {
+              google.script.run
+                .withSuccessHandler(
+                  () => {
+                    if (button) {
+                      button.disabled = false;
+                      button.textContent =
+                        'Add to Cart';
+                    }
+
+                    const card =
+                      document.getElementById(
+                        'shoppingAddCard'
+                      );
+
+                    if (card) {
+                      card.classList.remove(
+                        'open'
+                      );
+                    }
+
+                    shoppingPendingUpc = '';
+                    shoppingPendingProducts = [];
+
+                    setShoppingStatus(
+                      'Added to cart: ' +
+                      itemName,
+                      'success'
+                    );
+
+                    try {
+                      if (navigator.vibrate) {
+                        navigator.vibrate(80);
+                      }
+                    } catch (error) {}
+
+                    loadList(false);
+                  }
+                )
+                .withFailureHandler(
+                  error => {
+                    if (button) {
+                      button.disabled = false;
+                      button.textContent =
+                        'Add to Cart';
+                    }
+
+                    showError(error);
+
+                    setShoppingStatus(
+                      'The item was added to the list, but marking it purchased failed.',
+                      'error'
+                    );
+
+                    loadList(false);
+                  }
+                )
+                .webShoppingScanPurchase(
+                  created.entryId,
+                  true,
+                  upc,
+                  unitPrice,
+                  unitPrice === null
+                    ? 'scan_added'
+                    : 'scan_added_actual'
+                );
+            };
+
+          /*
+           * If Kroger identified the product, save that product match
+           * to the new master item before marking it purchased.
+           */
+          if (
+            product &&
+            product.productId &&
+            created.itemId
+          ) {
+            google.script.run
+              .withSuccessHandler(
+                finishPurchase
+              )
+              .withFailureHandler(
+                error => {
+                  console.warn(
+                    'Could not save Kroger match:',
+                    error
+                  );
+
+                  /*
+                   * Do not lose the shopping action just because
+                   * Kroger mapping failed. The item still gets added.
+                   */
+                  finishPurchase();
+                }
+              )
+              .webSetKrogerProductMatchForEntry(
+                created.itemId,
+                '',
+                product.productId
+              );
+
+          } else {
+            finishPurchase();
+          }
+        }
+      )
+      .withFailureHandler(
+        error => {
+          if (button) {
+            button.disabled = false;
+            button.textContent =
+              'Add to Cart';
+          }
+
+          showError(error);
+
+          setShoppingStatus(
+            'Could not add the scanned item.',
+            'error'
+          );
+        }
+      )
+      .webCreateAndAddItem(
+        selectedList,
+        itemName,
+        categoryId,
+        count,
+        unit,
+        notes
       );
   }
 
