@@ -2694,6 +2694,10 @@
   let shoppingPendingUpc = '';
   let shoppingPendingProducts = [];
   let shoppingPendingCategories = [];
+  let shoppingPendingMasters = [];
+  let shoppingPendingMaster = null;
+  let shoppingLookupGeneration = 0;
+  let shoppingLookupReady = false;
 
 
 
@@ -11157,6 +11161,9 @@ function addWeeklyMeal(
 
     shoppingPendingUpc = '';
     shoppingPendingProducts = [];
+    shoppingPendingMasters = [];
+    shoppingPendingMaster = null;
+    shoppingLookupGeneration++;
 
     const addCard =
       document.getElementById(
@@ -11465,10 +11472,11 @@ function addWeeklyMeal(
 
 
   function handleShoppingBarcode(
-    upc
+    upc,
+    resolvedItem
   ) {
     const item =
-      findCurrentItemByShoppingUpc(
+      resolvedItem || findCurrentItemByShoppingUpc(
         upc
       );
 
@@ -11490,6 +11498,7 @@ function addWeeklyMeal(
       return;
     }
 
+    cancelAddScannedShoppingItem();
     shoppingMatchedItem =
       item;
 
@@ -11621,6 +11630,9 @@ function addWeeklyMeal(
 
     shoppingPendingUpc = '';
     shoppingPendingProducts = [];
+    shoppingPendingMasters = [];
+    shoppingPendingMaster = null;
+    shoppingLookupGeneration++;
 
     setShoppingStatus(
       'Ready to scan.'
@@ -11656,6 +11668,20 @@ function addWeeklyMeal(
       );
 
     if (!select) {
+      return;
+    }
+
+    if (shoppingPendingMasters.length) {
+      shoppingPendingMaster = shoppingPendingMasters[Number(select.value.replace('master:', ''))] || null;
+      if (!select.value.startsWith('master:')) shoppingPendingMaster = null;
+      const master = shoppingPendingMaster;
+      if (master) {
+        document.getElementById('shoppingAddName').value = master.item;
+        document.getElementById('shoppingAddUnit').value = master.unit || 'each';
+        document.getElementById('shoppingAddCategory').value = master.categoryId;
+      }
+      document.getElementById('shoppingAddName').readOnly = !!master;
+      document.getElementById('shoppingAddCategory').disabled = !!master;
       return;
     }
 
@@ -11837,6 +11863,7 @@ function addWeeklyMeal(
               );
             }
           );
+          if (shoppingPendingMaster) select.value = shoppingPendingMaster.categoryId;
         }
       )
       .withFailureHandler(
@@ -11852,10 +11879,14 @@ function addWeeklyMeal(
 
 
   function beginAddScannedShoppingItem(upc) {
+    shoppingLookupReady = false;
     shoppingPendingUpc =
       String(upc || '').trim();
 
     shoppingPendingProducts = [];
+    shoppingPendingMasters = [];
+    shoppingPendingMaster = null;
+    shoppingLookupGeneration++;
 
     const card =
       document.getElementById(
@@ -11914,6 +11945,8 @@ function addWeeklyMeal(
     }
 
     if (name) name.value = '';
+    if (name) name.readOnly = false;
+    document.getElementById('shoppingAddCategory').disabled = false;
     if (count) count.value = '1';
     if (unit) unit.value = 'each';
     if (price) price.value = '';
@@ -11926,6 +11959,9 @@ function addWeeklyMeal(
       shoppingPendingUpc +
       '…'
     );
+
+    const generation = shoppingLookupGeneration;
+    const isCurrent = () => generation === shoppingLookupGeneration;
 
     const candidates =
       shoppingUpcCandidates(
@@ -11949,7 +11985,9 @@ function addWeeklyMeal(
     );
 
     function trySearch(index) {
+      if (!isCurrent()) return;
       if (index >= terms.length) {
+        shoppingLookupReady = true;
         populateShoppingAddProducts([]);
 
         if (status) {
@@ -11968,6 +12006,7 @@ function addWeeklyMeal(
       google.script.run
         .withSuccessHandler(
           result => {
+            if (!isCurrent()) return;
             const products =
               result &&
               result.success &&
@@ -11978,6 +12017,7 @@ function addWeeklyMeal(
                 : [];
 
             if (products.length) {
+              shoppingLookupReady = true;
               populateShoppingAddProducts(
                 products
               );
@@ -12020,11 +12060,61 @@ function addWeeklyMeal(
         );
     }
 
-    trySearch(0);
+    google.script.run
+      .withSuccessHandler(result => {
+        if (!isCurrent()) return;
+        if (!result || !result.success) {
+          setShoppingStatus('Saved barcode lookup failed. Please scan again.', 'error');
+          return;
+        }
+        const masters = Array.isArray(result.products) ? result.products : [];
+        if (!masters.length) { trySearch(0); return; }
+        shoppingLookupReady = true;
+        if (masters.length === 1 && currentListData && Array.isArray(currentListData.items)) {
+          const master = masters[0];
+          const matches = currentListData.items.filter(item =>
+            String(item.itemId) === master.itemId && String(item.variantId || '') === master.variantId);
+          const existing = matches.find(item => !item.purchased) || matches[0];
+          if (existing) {
+            cancelAddScannedShoppingItem();
+            handleShoppingBarcode(upc, existing);
+            return;
+          }
+        }
+        shoppingPendingMasters = masters;
+        productSelect.innerHTML = '';
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = 'Choose a saved product…';
+        productSelect.appendChild(placeholder);
+        masters.forEach((master, index) => {
+          const option = document.createElement('option');
+          option.value = 'master:' + index;
+          option.textContent = master.item;
+          productSelect.appendChild(option);
+        });
+        productSelect.value = masters.length === 1 ? 'master:0' : '';
+        shoppingAddProductChanged();
+        status.textContent = masters.length === 1
+          ? 'Known barcode — this will reuse your saved product. Confirm quantity and price.'
+          : 'This barcode matches several saved products. Choose the correct product.';
+        setShoppingStatus('Saved product found. Confirm it and tap Add to Cart.', 'success');
+      })
+      .withFailureHandler(error => {
+        if (!isCurrent()) return;
+        console.warn('Saved barcode lookup:', error);
+        status.textContent = 'Saved barcode lookup failed. Cancel and scan again to avoid duplicate products.';
+        setShoppingStatus('Could not check saved products. Please scan again.', 'error');
+      })
+      .webResolveShoppingUpc(shoppingPendingUpc);
   }
 
 
   function confirmAddScannedShoppingItem() {
+    if (!shoppingLookupReady) {
+      setShoppingStatus('Wait for barcode lookup to finish. If it failed, cancel and scan again.', 'error');
+      return;
+    }
     const upc =
       String(
         shoppingPendingUpc ||
@@ -12036,6 +12126,12 @@ function addWeeklyMeal(
         'Scan an item first.',
         'error'
       );
+      return;
+    }
+
+    const master = shoppingPendingMaster;
+    if (shoppingPendingMasters.length && !master) {
+      setShoppingStatus('Choose the saved product before adding it.', 'error');
       return;
     }
 
@@ -12192,7 +12288,7 @@ function addWeeklyMeal(
       ' list…'
     );
 
-    google.script.run
+    const addRequest = google.script.run
       .withSuccessHandler(
         created => {
           if (
@@ -12238,6 +12334,9 @@ function addWeeklyMeal(
 
                     shoppingPendingUpc = '';
                     shoppingPendingProducts = [];
+    shoppingPendingMasters = [];
+    shoppingPendingMaster = null;
+    shoppingLookupGeneration++;
 
                     setShoppingStatus(
                       'Added to cart: ' +
@@ -12336,15 +12435,12 @@ function addWeeklyMeal(
             'error'
           );
         }
-      )
-      .webCreateAndAddItem(
-        selectedList,
-        itemName,
-        categoryId,
-        count,
-        unit,
-        notes
       );
+    if (master) {
+      addRequest.webAddOrMergeItem(selectedList, master.itemId, master.item, count, unit, notes, master.variantId || '');
+    } else {
+      addRequest.webCreateAndAddItem(selectedList, itemName, categoryId, count, unit, notes);
+    }
   }
 
 

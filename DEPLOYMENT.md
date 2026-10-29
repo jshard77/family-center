@@ -30,14 +30,6 @@ retained. The proxy need not be removed. The service worker currently caches no 
 The origin check is browser CORS control, not authentication. Existing backend
 authorization remains responsible for access control. No request data is logged.
 
-## Next increment: shared UPC aliases
+## Shared UPC aliases
 
-The current repository has no Apps Script source. Obtain the current source and
-spreadsheet schema before changing persistent product matching. Implement the
-lookup in this order: weekly list, master UPC/alias data, Kroger, manual entry.
-Store aliases against stable master item/variant IDs, with locking for concurrent
-writes and UPC values as text to retain zeros. Reuse the existing master item when
-adding to a weekly list. Save an alias after a confirmed successful match/add,
-including manual products; do not require a Kroger product ID. Keep stale scan
-responses from overwriting a newer scan. Test UPC-A/EAN variants, off-list known
-items, manual products, duplicate scans, and two devices sharing an alias.
+Completed as the next increment; see backend/README.md for schema, integration, tests, and rollback.
