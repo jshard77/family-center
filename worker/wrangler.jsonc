@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "family-center-api",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-10-28",
+  "workers_dev": false,
+  "routes": [{ "pattern": "api.mapleview.xyz", "custom_domain": true }],
+  "vars": { "ALLOWED_ORIGIN": "https://family.mapleview.xyz" }
+}

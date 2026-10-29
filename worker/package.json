@@ -1,0 +1,7 @@
+{
+  "name": "family-center-api",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test", "deploy": "wrangler deploy" },
+  "devDependencies": { "wrangler": "^4.0.0" }
+}
