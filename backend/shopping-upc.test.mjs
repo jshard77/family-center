@@ -59,7 +59,7 @@ test('frontend checks saved products before Kroger and ignores cancelled lookups
     webResolveShoppingUpc(upc){calls.push(['saved',upc,success])},webSearchKrogerProducts(upc){calls.push(['kroger',upc,success])}};
   const ctx=vm.createContext({shoppingPendingUpc:'',shoppingPendingProducts:[],shoppingPendingMasters:[],shoppingPendingMaster:null,shoppingLookupGeneration:0,
     document:{getElementById:id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)},createElement:element},
-    populateShoppingAddCategories(){},setShoppingStatus(){},shoppingUpcCandidates:()=>[],google:{script:{run:runner}},console});
+    resetShoppingItemLink(){},populateShoppingAddCategories(){},setShoppingStatus(){},shoppingUpcCandidates:()=>[],google:{script:{run:runner}},console});
   vm.runInContext(fn,ctx);
   ctx.beginAddScannedShoppingItem('123456789012');
   assert.equal(calls.length,1);

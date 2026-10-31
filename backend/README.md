@@ -1,5 +1,11 @@
 # Shopping barcode increment
 
+## Link an unrecognized barcode to an older saved item
+
+In Shopping Mode, scan or enter the barcode, choose **Link barcode to a saved item**, search the complete saved catalog, select an item and (where available) a variant, then tap **Link & Add to Cart**. The existing purchase endpoint saves the UPC alias even without a price. The saved category and master/variant IDs are retained; no duplicate master item is created.
+
+This frontend increment reuses `webGetRecipeItemChoices`, `webGetItemVariants`, `webAddOrMergeItem`, and `webShoppingScanPurchase`; Apps Script remains at version 92. Search and variant responses are ignored after cancellation, a new scan, or a newer choice. Test with `node --test backend/*.test.mjs worker/proxy.test.mjs`.
+
 Deployed to the existing Apps Script web app as version 92 on October 29, 2026. The deployment ID and access settings are unchanged.
 
 `ShoppingUpcAliases.gs` is a new companion module. Two small edits connect it to the existing project:

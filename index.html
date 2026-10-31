@@ -2197,6 +2197,28 @@
       <div id="shoppingAddLookupStatus" class="shopping-match-detail"></div>
 
       <div class="field">
+        <button class="button secondary" type="button" onclick="openShoppingItemLink()">
+          Link barcode to a saved item
+        </button>
+      </div>
+      <div id="shoppingLinkPanel" hidden>
+        <div class="field">
+          <label for="shoppingLinkSearch">Search all saved items</label>
+          <input id="shoppingLinkSearch" type="search" autocomplete="off"
+                 placeholder="Start typing an item name" oninput="searchShoppingLinkItems()">
+        </div>
+        <div id="shoppingLinkStatus" class="shopping-match-detail" role="status"></div>
+        <div id="shoppingLinkResults" class="field"></div>
+        <div id="shoppingLinkVariantField" class="field" hidden>
+          <label for="shoppingLinkVariant">Variant</label>
+          <select id="shoppingLinkVariant" onchange="shoppingLinkVariantChanged()"></select>
+        </div>
+        <div class="field">
+          <button class="button secondary" type="button" onclick="cancelShoppingItemLink()">Back to barcode results</button>
+        </div>
+      </div>
+
+      <div class="field">
         <label for="shoppingAddProduct">Product</label>
         <select id="shoppingAddProduct" onchange="shoppingAddProductChanged()">
           <option value="">Looking up barcode…</option>
@@ -2698,6 +2720,10 @@
   let shoppingPendingMaster = null;
   let shoppingLookupGeneration = 0;
   let shoppingLookupReady = false;
+  let shoppingLinkTimer = null;
+  let shoppingLinkRequest = 0;
+  let shoppingLinkItem = null;
+  let shoppingLinkVariants = [];
 
 
 
@@ -11622,6 +11648,7 @@ function addWeeklyMeal(
 
 
   function cancelAddScannedShoppingItem() {
+    resetShoppingItemLink();
     const card = document.getElementById('shoppingAddCard');
 
     if (card) {
@@ -11678,7 +11705,7 @@ function addWeeklyMeal(
       if (master) {
         document.getElementById('shoppingAddName').value = master.item;
         document.getElementById('shoppingAddUnit').value = master.unit || 'each';
-        document.getElementById('shoppingAddCategory').value = master.categoryId;
+        setShoppingMasterCategory(master);
       }
       document.getElementById('shoppingAddName').readOnly = !!master;
       document.getElementById('shoppingAddCategory').disabled = !!master;
@@ -11863,7 +11890,7 @@ function addWeeklyMeal(
               );
             }
           );
-          if (shoppingPendingMaster) select.value = shoppingPendingMaster.categoryId;
+          if (shoppingPendingMaster) setShoppingMasterCategory(shoppingPendingMaster);
         }
       )
       .withFailureHandler(
@@ -11878,7 +11905,172 @@ function addWeeklyMeal(
   }
 
 
+  function setShoppingMasterCategory(master) {
+    const select = document.getElementById('shoppingAddCategory');
+    if (master.categoryId) {
+      select.value = master.categoryId;
+    } else {
+      // The all-catalog search returns IDs and names; the server retains the category.
+      select.innerHTML = '<option value="">Use saved item category</option>';
+    }
+  }
+
+  function resetShoppingItemLink() {
+    clearTimeout(shoppingLinkTimer);
+    shoppingLinkRequest++;
+    shoppingLinkItem = null;
+    shoppingLinkVariants = [];
+    document.getElementById('shoppingLinkPanel').hidden = true;
+    document.getElementById('shoppingLinkSearch').value = '';
+    document.getElementById('shoppingLinkResults').innerHTML = '';
+    document.getElementById('shoppingLinkVariantField').hidden = true;
+    document.getElementById('shoppingAddButton').textContent = 'Add to Cart';
+  }
+
+  function openShoppingItemLink() {
+    if (!shoppingPendingUpc) return;
+    resetShoppingItemLink();
+    shoppingLookupGeneration++; // Ignore late barcode/Kroger responses while linking.
+    shoppingLookupReady = false;
+    shoppingPendingMasters = [];
+    shoppingPendingMaster = null;
+    shoppingPendingProducts = [];
+    document.getElementById('shoppingLinkPanel').hidden = false;
+    document.getElementById('shoppingLinkStatus').textContent = 'Search by name, then choose the saved item this barcode belongs to.';
+    document.getElementById('shoppingAddProduct').innerHTML = '<option value="">Choose a saved item below</option>';
+    document.getElementById('shoppingAddName').value = '';
+    document.getElementById('shoppingAddName').readOnly = true;
+    document.getElementById('shoppingAddCategory').disabled = true;
+    document.getElementById('shoppingAddLookupStatus').textContent = 'Link this barcode without creating a duplicate item. The link is saved when you add it to the cart.';
+    document.getElementById('shoppingLinkSearch').focus();
+  }
+
+  function cancelShoppingItemLink() {
+    const upc = shoppingPendingUpc;
+    if (upc) beginAddScannedShoppingItem(upc);
+  }
+
+  function searchShoppingLinkItems() {
+    clearTimeout(shoppingLinkTimer);
+    shoppingLookupReady = false;
+    shoppingPendingMaster = null;
+    shoppingPendingMasters = [];
+    shoppingLinkItem = null;
+    document.getElementById('shoppingLinkVariantField').hidden = true;
+    document.getElementById('shoppingAddName').value = '';
+    document.getElementById('shoppingAddProduct').innerHTML = '<option value="">Choose a saved item below</option>';
+    const request = ++shoppingLinkRequest;
+    const generation = shoppingLookupGeneration;
+    const query = document.getElementById('shoppingLinkSearch').value.trim();
+    const results = document.getElementById('shoppingLinkResults');
+    const status = document.getElementById('shoppingLinkStatus');
+    results.innerHTML = '';
+    if (query.length < 2) {
+      status.textContent = 'Type at least two letters to search all saved items.';
+      return;
+    }
+    status.textContent = 'Searching saved items…';
+    shoppingLinkTimer = setTimeout(() => {
+      google.script.run
+        .withSuccessHandler(items => {
+          if (request !== shoppingLinkRequest || generation !== shoppingLookupGeneration) return;
+          const rows = Array.isArray(items) ? items : [];
+          status.textContent = rows.length ? 'Choose an existing item:' : 'No saved items found. Try another name, or go back to create a new item.';
+          rows.forEach(item => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'button secondary';
+            button.style.margin = '4px';
+            button.textContent = item.item;
+            button.onclick = () => chooseShoppingLinkItem(item);
+            results.appendChild(button);
+          });
+        })
+        .withFailureHandler(() => {
+          if (request !== shoppingLinkRequest || generation !== shoppingLookupGeneration) return;
+          status.textContent = 'Could not search saved items. Try again.';
+        })
+        .webGetRecipeItemChoices(query);
+    }, 250);
+  }
+
+  function chooseShoppingLinkItem(item) {
+    clearTimeout(shoppingLinkTimer);
+    const request = ++shoppingLinkRequest;
+    const generation = shoppingLookupGeneration;
+    shoppingLinkItem = {itemId: String(item.itemId), item: item.item, variantId: '', unit: ''};
+    shoppingPendingMaster = null;
+    shoppingPendingMasters = [];
+    shoppingLookupReady = false;
+    document.getElementById('shoppingLinkResults').innerHTML = '';
+    document.getElementById('shoppingLinkStatus').textContent = 'Checking variants for ' + item.item + '…';
+    document.getElementById('shoppingLinkVariantField').hidden = true;
+    google.script.run
+      .withSuccessHandler(variants => {
+        if (request !== shoppingLinkRequest || generation !== shoppingLookupGeneration) return;
+        shoppingLinkVariants = Array.isArray(variants) ? variants : [];
+        const select = document.getElementById('shoppingLinkVariant');
+        select.innerHTML = '';
+        if (shoppingLinkVariants.length) {
+          const placeholder = document.createElement('option');
+          placeholder.value = '__choose__';
+          placeholder.textContent = 'Choose variant…';
+          select.appendChild(placeholder);
+        }
+        const generic = document.createElement('option');
+        generic.value = '';
+        generic.textContent = 'Generic / no variant';
+        select.appendChild(generic);
+        shoppingLinkVariants.forEach(variant => {
+          const option = document.createElement('option');
+          option.value = String(variant.variantId);
+          option.textContent = variant.variant;
+          select.appendChild(option);
+        });
+        select.value = shoppingLinkVariants.length ? '__choose__' : '';
+        document.getElementById('shoppingLinkVariantField').hidden = !shoppingLinkVariants.length;
+        if (shoppingLinkVariants.length) {
+          document.getElementById('shoppingLinkStatus').textContent = 'Selected ' + item.item + '. Choose its variant or Generic / no variant.';
+        } else {
+          shoppingLinkVariantChanged();
+        }
+      })
+      .withFailureHandler(() => {
+        if (request !== shoppingLinkRequest || generation !== shoppingLookupGeneration) return;
+        document.getElementById('shoppingLinkStatus').textContent = 'Could not load variants. Search and choose the item again.';
+      })
+      .webGetItemVariants(item.itemId);
+  }
+
+  function shoppingLinkVariantChanged() {
+    if (!shoppingLinkItem) return;
+    const id = document.getElementById('shoppingLinkVariant').value;
+    if (id === '__choose__') {
+      shoppingLookupReady = false;
+      return;
+    }
+    const variant = shoppingLinkVariants.find(row => String(row.variantId) === id);
+    if (id && !variant) return;
+    const master = {...shoppingLinkItem, variantId: id,
+      item: shoppingLinkItem.item + (variant ? ' — ' + variant.variant : ''),
+      unit: variant ? variant.defaultUnit || '' : ''};
+    shoppingPendingMasters = [master];
+    const select = document.getElementById('shoppingAddProduct');
+    select.innerHTML = '';
+    const option = document.createElement('option');
+    option.value = 'master:0';
+    option.textContent = master.item;
+    select.appendChild(option);
+    select.value = 'master:0';
+    shoppingAddProductChanged();
+    shoppingLookupReady = true;
+    document.getElementById('shoppingAddButton').textContent = 'Link & Add to Cart';
+    document.getElementById('shoppingLinkStatus').textContent = 'Selected: ' + master.item + '. Confirm quantity and price below. This barcode will be remembered on every device.';
+    setShoppingStatus('Saved item selected. Confirm and tap Link & Add to Cart.', 'success');
+  }
+
   function beginAddScannedShoppingItem(upc) {
+    resetShoppingItemLink();
     shoppingLookupReady = false;
     shoppingPendingUpc =
       String(upc || '').trim();
