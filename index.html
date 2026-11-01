@@ -247,6 +247,8 @@
       align-items: center;
       justify-content: center;
       padding: 16px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
 
       /* A closed modal must never intercept taps on mobile. */
       pointer-events: none;
@@ -260,6 +262,12 @@
     .modal {
       width: 100%;
       max-width: 450px;
+      max-height: calc(100vh - 32px);
+      max-height: calc(100dvh - 32px);
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      overflow-wrap: anywhere;
       background: white;
       border-radius: 16px;
       padding: 20px;
@@ -283,15 +291,23 @@
 
     .count-unit {
       display: grid;
-      grid-template-columns: 110px 1fr;
+      grid-template-columns: minmax(0, 110px) minmax(0, 1fr);
       gap: 10px;
     }
 
     .modal-buttons {
       display: flex;
+      flex-wrap: wrap;
       justify-content: flex-end;
       gap: 10px;
       margin-top: 18px;
+      position: sticky;
+      bottom: -20px;
+      z-index: 5;
+      background: white;
+      padding: 12px 0 20px;
+      margin-bottom: -20px;
+      border-top: 1px solid #eee;
     }
 
     .button {
@@ -1082,8 +1098,6 @@
   /* RECIPE INGREDIENT REVIEW */
   .ingredient-review-modal {
     max-width: 760px;
-    max-height: 90vh;
-    overflow-y: auto;
   }
 
   .ingredient-review-intro {
@@ -1259,8 +1273,29 @@
 
     .shopping-mode-modal {
       max-width: 620px;
-      max-height: calc(100vh - 24px);
-      overflow-y: auto;
+    }
+
+    .shopping-mode-heading {
+      position: sticky;
+      top: -20px;
+      z-index: 6;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: white;
+      margin: -20px -20px 12px;
+      padding: 12px 20px;
+      border-bottom: 1px solid #eee;
+    }
+
+    .shopping-mode-heading h2 {
+      margin: 0;
+      font-size: 22px;
+    }
+
+    .shopping-mode-heading button {
+      flex-shrink: 0;
     }
 
     .shopping-summary-card {
@@ -1384,6 +1419,12 @@
       gap: 8px;
       flex-wrap: wrap;
       margin-top: 10px;
+      position: sticky;
+      bottom: 62px;
+      z-index: 4;
+      background: white;
+      padding: 10px 0;
+      border-top: 1px solid #eee;
     }
 
     @media (max-width: 650px) {
@@ -2079,7 +2120,10 @@
   
 <div id="shoppingModeModalBackground" class="modal-background">
   <div class="modal shopping-mode-modal">
-    <h2 id="shoppingModeTitle">Shopping Mode</h2>
+    <div class="shopping-mode-heading">
+      <h2 id="shoppingModeTitle">Shopping Mode</h2>
+      <button class="button secondary" type="button" onclick="closeShoppingMode()" aria-label="Close Shopping Mode">Close</button>
+    </div>
 
     <div id="shoppingModeSummary" class="shopping-summary-card"></div>
 
